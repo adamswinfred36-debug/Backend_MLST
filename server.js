@@ -21,12 +21,28 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Conexão com MongoDB
-mongoose.connect(process.env.MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-})
-.then(() => console.log('✅ Conectado ao MongoDB'))
-.catch((err) => console.error('❌ Erro ao conectar ao MongoDB:', err));
+if (!process.env.MONGODB_URI) {
+  console.error('❌ MONGODB_URI não configurado. Configure a variável no Render.');
+} else {
+  mongoose
+    .connect(process.env.MONGODB_URI, {
+      serverSelectionTimeoutMS: 20000,
+      socketTimeoutMS: 20000,
+    })
+    .then(() => console.log('✅ Conectado ao MongoDB'))
+    .catch((err) => console.error('❌ Erro ao conectar ao MongoDB:', err));
+}
+
+mongoose.connection.on('error', (err) => {
+  console.error('❌ MongoDB error:', err);
+});
+
+// Se o banco estiver indisponível, evita 500 genérico nas rotas /api
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api')) return next();
+  if (mongoose.connection.readyState === 1) return next();
+  return res.status(503).json({ message: 'Banco de dados indisponível. Tente novamente em instantes.' });
+});
 
 // Criar diretório de uploads se não existir
 const fs = require('fs');
@@ -41,6 +57,26 @@ app.use('/api/admin', require('./routes/admin'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/orders', require('./routes/orders'));
 app.use('/api/auth', require('./routes/auth').router);
+
+// Healthcheck (Render)
+app.get('/health', (req, res) => {
+  res.json({ ok: true });
+});
+
+// Índice da API
+app.get('/api', (req, res) => {
+  res.json({
+    message: 'API Mercado Livre Clone',
+    version: '1.0.0',
+    endpoints: {
+      products: '/api/products',
+      admin: '/api/admin',
+      settings: '/api/settings',
+      orders: '/api/orders',
+      auth: '/api/auth',
+    },
+  });
+});
 
 // Rota de teste
 app.get('/', (req, res) => {
