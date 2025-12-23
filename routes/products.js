@@ -3,17 +3,48 @@ const router = express.Router();
 const Product = require('../models/Product');
 const multer = require('multer');
 const path = require('path');
+const cloudinary = require('cloudinary').v2;
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
+
+const isProduction = process.env.NODE_ENV === 'production';
+const hasCloudinary = Boolean(
+  process.env.CLOUDINARY_CLOUD_NAME &&
+  process.env.CLOUDINARY_API_KEY &&
+  process.env.CLOUDINARY_API_SECRET
+);
+
+if (hasCloudinary) {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+  });
+}
 
 // Configuração do multer para upload de imagens
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, 'uploads/');
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, 'product-' + uniqueSuffix + path.extname(file.originalname));
-  }
-});
+const storage = hasCloudinary
+  ? new CloudinaryStorage({
+      cloudinary,
+      params: async (req, file) => {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+        return {
+          folder: process.env.CLOUDINARY_FOLDER || 'mercado-livre/products',
+          public_id: `product-${uniqueSuffix}`,
+          allowed_formats: ['jpg', 'jpeg', 'png', 'webp'],
+        };
+      },
+    })
+  : isProduction
+    ? multer.memoryStorage()
+    : multer.diskStorage({
+        destination: function (req, file, cb) {
+          cb(null, 'uploads/');
+        },
+        filename: function (req, file, cb) {
+          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+          cb(null, 'product-' + uniqueSuffix + path.extname(file.originalname));
+        },
+      });
 
 const upload = multer({
   storage: storage,
@@ -76,10 +107,17 @@ router.get('/:slug', async (req, res) => {
 router.post('/', upload.array('images', 10), async (req, res) => {
   try {
     const productData = JSON.parse(req.body.data);
+
+    if (isProduction && !hasCloudinary && req.files && req.files.length > 0) {
+      return res.status(503).json({
+        message:
+          'Upload de imagens está desabilitado em produção sem Cloudinary. Configure CLOUDINARY_CLOUD_NAME / CLOUDINARY_API_KEY / CLOUDINARY_API_SECRET.'
+      });
+    }
     
     // Adicionar URLs das imagens
     if (req.files && req.files.length > 0) {
-      productData.images = req.files.map(file => `/uploads/${file.filename}`);
+      productData.images = req.files.map(file => (hasCloudinary ? file.path : `/uploads/${file.filename}`));
     }
     
     const product = new Product(productData);
@@ -94,10 +132,17 @@ router.post('/', upload.array('images', 10), async (req, res) => {
 router.put('/:id', upload.array('images', 10), async (req, res) => {
   try {
     const productData = JSON.parse(req.body.data);
+
+    if (isProduction && !hasCloudinary && req.files && req.files.length > 0) {
+      return res.status(503).json({
+        message:
+          'Upload de imagens está desabilitado em produção sem Cloudinary. Configure CLOUDINARY_CLOUD_NAME / CLOUDINARY_API_KEY / CLOUDINARY_API_SECRET.'
+      });
+    }
     
     // Adicionar novas imagens se houver
     if (req.files && req.files.length > 0) {
-      const newImages = req.files.map(file => `/uploads/${file.filename}`);
+      const newImages = req.files.map(file => (hasCloudinary ? file.path : `/uploads/${file.filename}`));
       productData.images = [...(productData.images || []), ...newImages];
     }
     
